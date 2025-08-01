@@ -1,4 +1,3 @@
-
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -14,11 +13,16 @@ const io = new Server(server, {
 
 const rooms = {};
 
+function generateRoomCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit
+}
+
 io.on('connection', (socket) => {
   console.log("✅ User connected:", socket.id);
 
   socket.on('createRoom', ({ name, maxPlayers, questionsPerPlayer }, callback) => {
-    const roomId = Math.floor(1000 + Math.random() * 9000).toString();
+    const roomId = generateRoomCode();
+
     rooms[roomId] = {
       hostId: socket.id,
       players: [{ id: socket.id, name, isReady: false }],
@@ -28,37 +32,58 @@ io.on('connection', (socket) => {
       readyList: [],
       gameStarted: false
     };
+
     socket.join(roomId);
     callback({ success: true, roomId });
     console.log(`📦 Room ${roomId} created by ${name}`);
   });
 
-  socket.on('joinRoom', ({ roomId, name }, callback) => {
+  socket.on('joinRoom', ({ roomId, name }) => {
     const room = rooms[roomId];
-    if (!room) return callback({ success: false, message: "Room not found" });
-    if (room.players.length >= room.maxPlayers) return callback({ success: false, message: "Room full" });
+    if (!room) {
+      socket.emit('joinError', { message: "❌ الغرفة غير موجودة" });
+      return;
+    }
 
-    room.players.push({ id: socket.id, name, isReady: false });
+    if (room.players.length >= room.maxPlayers) {
+      socket.emit('joinError', { message: "❌ الغرفة ممتلئة" });
+      return;
+    }
+
+    const player = { id: socket.id, name, isReady: false };
+    room.players.push(player);
     socket.join(roomId);
 
-    io.to(roomId).emit('playerJoined', room.players);
-    callback({ success: true, roomId });
+    socket.emit('joinedRoom', room); // Send full room state to joining player
+    io.to(roomId).emit('playerJoined', room.players); // Update everyone
+
     console.log(`👤 ${name} joined room ${roomId}`);
+
+    // If full, notify host to start
+    if (room.players.length === room.maxPlayers) {
+      io.to(room.hostId).emit('allPlayersJoined');
+    }
   });
 
   socket.on('submitQuestion', ({ roomId, question, target }) => {
-    if (rooms[roomId]) {
-      rooms[roomId].questions.push({ from: socket.id, text: question, to: target });
+    const room = rooms[roomId];
+    if (room) {
+      room.questions.push({ from: socket.id, text: question, to: target });
     }
   });
 
   socket.on('playerReady', ({ roomId }) => {
     const room = rooms[roomId];
     if (!room) return;
+
     const player = room.players.find(p => p.id === socket.id);
     if (player) player.isReady = true;
 
-    io.to(roomId).emit('updateReadyList', room.players.map(p => ({ id: p.id, name: p.name, isReady: p.isReady })));
+    io.to(roomId).emit('updateReadyList', room.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      isReady: p.isReady
+    })));
 
     const allReady = room.players.every(p => p.isReady);
     if (allReady) {
@@ -67,9 +92,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('startGame', ({ roomId }) => {
-    if (rooms[roomId] && rooms[roomId].hostId === socket.id) {
-      rooms[roomId].gameStarted = true;
-      io.to(roomId).emit('gameStarted', rooms[roomId].questions);
+    const room = rooms[roomId];
+    if (room && room.hostId === socket.id) {
+      room.gameStarted = true;
+      io.to(roomId).emit('gameStarted', room.questions);
     }
   });
 
@@ -83,9 +109,15 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log("❌ User disconnected:", socket.id);
+
     for (const roomId in rooms) {
       const room = rooms[roomId];
-      room.players = room.players.filter(p => p.id !== socket.id);
+      const index = room.players.findIndex(p => p.id === socket.id);
+      if (index !== -1) {
+        room.players.splice(index, 1);
+        io.to(roomId).emit('playerLeft', room.players);
+      }
+
       if (room.hostId === socket.id) {
         io.to(roomId).emit('hostLeft');
         delete rooms[roomId];
