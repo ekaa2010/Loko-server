@@ -7,7 +7,11 @@ const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, {
+  cors: {
+    origin: "*"
+  }
+});
 
 const rooms = {};
 
@@ -34,6 +38,9 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     callback({ success: true, roomId });
     console.log(`📦 Room ${roomId} created by ${name}`);
+
+    // Broadcast player list to host (initial state)
+    io.to(roomId).emit('playerListUpdate', rooms[roomId].players);
   });
 
   socket.on('joinRoom', ({ roomId, name }) => {
@@ -57,7 +64,9 @@ io.on('connection', (socket) => {
 
     console.log(`👤 ${name} joined room ${roomId}`);
 
-    // If full, notify host to start
+    // Update targetSelect for everyone
+    io.to(roomId).emit('playerListUpdate', room.players);
+
     if (room.players.length === room.maxPlayers) {
       io.to(room.hostId).emit('allPlayersJoined');
     }
@@ -93,13 +102,11 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room) return;
 
-    // Only the host can start
     if (socket.id !== room.hostId) {
       socket.emit('error', 'فقط منشئ الغرفة يمكنه بدء المرحلة');
       return;
     }
 
-    // ✅ Notify all players (including host)
     room.players.forEach(player => {
       io.to(player.id).emit('startQuestionEntry');
     });
@@ -133,6 +140,9 @@ io.on('connection', (socket) => {
         const player = room.players[index];
         room.players.splice(index, 1);
         io.to(roomId).emit('playerLeft', room.players);
+
+        // 🟡 Update the player list for everyone else
+        io.to(roomId).emit('playerListUpdate', room.players);
 
         if (socket.id === room.hostId) {
           io.to(roomId).emit('hostLeft');
