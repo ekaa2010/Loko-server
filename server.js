@@ -91,6 +91,26 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ✅ جديد: بدء مرحلة إدخال الأسئلة من قِبل الهوست
+  socket.on('startQuestionEntry', ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    if (socket.id !== room.hostId) {
+      socket.emit('error', '❌ فقط منشئ الغرفة يمكنه بدء مرحلة الأسئلة');
+      return;
+    }
+
+    // أرسل الحدث فقط للاعبين غير الهوست
+    room.players.forEach(player => {
+      if (player.id !== room.hostId) {
+        io.to(player.id).emit('startQuestionEntry');
+      }
+    });
+
+    console.log(`✍️ Question entry phase started in room ${roomId}`);
+  });
+
   socket.on('startGame', ({ roomId }) => {
     const room = rooms[roomId];
     if (room && room.hostId === socket.id) {
@@ -114,6 +134,7 @@ io.on('connection', (socket) => {
       const room = rooms[roomId];
       const index = room.players.findIndex(p => p.id === socket.id);
       if (index !== -1) {
+        const player = room.players[index];
         room.players.splice(index, 1);
         io.to(roomId).emit('playerLeft', room.players);
       }
