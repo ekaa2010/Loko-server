@@ -16,7 +16,7 @@ const io = new Server(server, {
 const rooms = {};
 
 function generateRoomCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
 }
 
 io.on('connection', (socket) => {
@@ -39,7 +39,6 @@ io.on('connection', (socket) => {
     callback({ success: true, roomId });
     console.log(`📦 Room ${roomId} created by ${name}`);
 
-    // Broadcast player list to host (initial state)
     io.to(roomId).emit('playerListUpdate', rooms[roomId].players);
   });
 
@@ -59,13 +58,16 @@ io.on('connection', (socket) => {
     room.players.push(player);
     socket.join(roomId);
 
-    socket.emit('joinedRoom', room); // Send full room state to joining player
-    io.to(roomId).emit('playerJoined', room.players); // Update everyone
+    socket.emit('joinedRoom', {
+      hostId: room.hostId,
+      questionsPerPlayer: room.questionsPerPlayer,
+      players: room.players
+    });
+
+    io.to(roomId).emit('playerJoined', room.players);
+    io.to(roomId).emit('playerListUpdate', room.players);
 
     console.log(`👤 ${name} joined room ${roomId}`);
-
-    // Update targetSelect for everyone
-    io.to(roomId).emit('playerListUpdate', room.players);
 
     if (room.players.length === room.maxPlayers) {
       io.to(room.hostId).emit('allPlayersJoined');
@@ -103,7 +105,7 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     if (socket.id !== room.hostId) {
-      socket.emit('error', 'فقط منشئ الغرفة يمكنه بدء المرحلة');
+      socket.emit('error', '❌ فقط منشئ الغرفة يمكنه بدء المرحلة');
       return;
     }
 
@@ -116,10 +118,13 @@ io.on('connection', (socket) => {
 
   socket.on('startGame', ({ roomId }) => {
     const room = rooms[roomId];
-    if (room && room.hostId === socket.id) {
-      room.gameStarted = true;
-      io.to(roomId).emit('gameStarted', room.questions);
-    }
+    if (!room || room.hostId !== socket.id || room.gameStarted) return;
+
+    room.gameStarted = true;
+
+    io.to(roomId).emit('gameStarted', {
+      questions: room.questions
+    });
   });
 
   socket.on('markAnswer', ({ roomId, questionIndex, isCorrect }) => {
@@ -139,9 +144,8 @@ io.on('connection', (socket) => {
       if (index !== -1) {
         const player = room.players[index];
         room.players.splice(index, 1);
-        io.to(roomId).emit('playerLeft', room.players);
 
-        // 🟡 Update the player list for everyone else
+        io.to(roomId).emit('playerLeft', room.players);
         io.to(roomId).emit('playerListUpdate', room.players);
 
         if (socket.id === room.hostId) {
