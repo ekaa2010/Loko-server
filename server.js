@@ -58,10 +58,12 @@ io.on('connection', (socket) => {
     room.players.push(player);
     socket.join(roomId);
 
+    // ✅ هذا هو التعديل المهم الوحيد المضاف
     socket.emit('joinedRoom', {
       hostId: room.hostId,
       questionsPerPlayer: room.questionsPerPlayer,
-      players: room.players
+      players: room.players,
+      gameStarted: room.gameStarted // ✅ أُضيف هنا
     });
 
     io.to(roomId).emit('playerJoined', room.players);
@@ -118,13 +120,12 @@ io.on('connection', (socket) => {
 
   socket.on('startGame', ({ roomId }) => {
     const room = rooms[roomId];
-    if (!room || room.hostId !== socket.id || room.gameStarted) return;
-
-    room.gameStarted = true;
-
-    io.to(roomId).emit('gameStarted', {
-      questions: room.questions
-    });
+    if (room && room.hostId === socket.id && !room.gameStarted) {
+      room.gameStarted = true;
+      io.to(roomId).emit('gameStarted', {
+        questions: room.questions
+      });
+    }
   });
 
   socket.on('markAnswer', ({ roomId, questionIndex, isCorrect }) => {
