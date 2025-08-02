@@ -36,8 +36,17 @@ io.on('connection', (socket) => {
     };
 
     socket.join(roomId);
+
+    // ✅ نُعيد بيانات الغرفة كاملة
     if (typeof callback === 'function') {
-      callback({ success: true, roomId });
+      callback({
+        success: true,
+        roomId,
+        players: rooms[roomId].players,
+        maxPlayers: rooms[roomId].maxPlayers,
+        questionsPerPlayer: rooms[roomId].questionsPerPlayer,
+        hostId: rooms[roomId].hostId
+      });
     }
 
     console.log(`📦 Room ${roomId} created by ${name}`);
@@ -63,10 +72,12 @@ io.on('connection', (socket) => {
     socket.emit('joinedRoom', {
       hostId: room.hostId,
       questionsPerPlayer: room.questionsPerPlayer,
-      players: room.players
+      players: room.players,
+      roomId: roomId,
+      maxPlayers: room.maxPlayers
     });
 
-    io.to(roomId).emit('playerJoined', room.players);
+    io.to(roomId).emit('playerJoined', { players: room.players });
     io.to(roomId).emit('playerListUpdate', room.players);
 
     console.log(`👤 ${name} joined room ${roomId}`);
