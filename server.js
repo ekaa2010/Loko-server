@@ -8,20 +8,19 @@ app.use(cors());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
+  cors: { origin: "*" }
 });
 
 const rooms = {};
 
 function generateRoomCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 io.on('connection', (socket) => {
   console.log("✅ User connected:", socket.id);
 
+  // ✅ تعديل هنا
   socket.on('createRoom', ({ name, maxPlayers, questionsPerPlayer }, callback) => {
     const roomId = generateRoomCode();
 
@@ -37,15 +36,17 @@ io.on('connection', (socket) => {
 
     socket.join(roomId);
 
-    // ✅ نُعيد بيانات الغرفة كاملة
+    // ✅ التعديل المهم: رجع roomState موحد
     if (typeof callback === 'function') {
       callback({
         success: true,
-        roomId,
-        players: rooms[roomId].players,
-        maxPlayers: rooms[roomId].maxPlayers,
-        questionsPerPlayer: rooms[roomId].questionsPerPlayer,
-        hostId: rooms[roomId].hostId
+        roomState: {
+          roomId,
+          playerLimit: maxPlayers,
+          players: rooms[roomId].players,
+          questionsPerPlayer,
+          hostId: socket.id
+        }
       });
     }
 
@@ -72,12 +73,13 @@ io.on('connection', (socket) => {
     socket.emit('joinedRoom', {
       hostId: room.hostId,
       questionsPerPlayer: room.questionsPerPlayer,
-      players: room.players,
-      roomId: roomId,
-      maxPlayers: room.maxPlayers
+      players: room.players
     });
 
-    io.to(roomId).emit('playerJoined', { players: room.players });
+    io.to(roomId).emit('playerJoined', {
+      players: room.players
+    });
+
     io.to(roomId).emit('playerListUpdate', room.players);
 
     console.log(`👤 ${name} joined room ${roomId}`);
