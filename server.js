@@ -1,99 +1,102 @@
 const express = require("express");
 const http = require("http");
-const cors = require("cors");
 const { Server } = require("socket.io");
+const cors = require("cors");
 
 const app = express();
 app.use(cors());
-const server = http.createServer(app);
 
+const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // عدل حسب الدومين النهائي
-    methods: ["GET", "POST"]
-  }
+    origin: "*",
+  },
 });
 
-const rooms = {}; // roomId -> { players: [], hostId, isStarted, ... }
+const rooms = {};
 
-function generateRoomCode() {
-  return Math.random().toString(36).substr(2, 6).toUpperCase();
+function generateRoomId() {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit room ID
 }
 
 io.on("connection", (socket) => {
-  console.log("✅ عميل متصل:", socket.id);
+  console.log("⚡ عميل جديد متصل:", socket.id);
 
-  socket.on("createRoom", ({ name }, callback) => {
-    const roomId = generateRoomCode();
+  socket.on("createRoom", ({ name, numPlayers }, callback) => {
+    const roomId = generateRoomId();
     rooms[roomId] = {
       hostId: socket.id,
       players: [{ id: socket.id, name, isReady: false }],
+      maxPlayers: numPlayers,
+      started: false,
       questions: [],
-      isStarted: false
     };
     socket.join(roomId);
-    console.log(`🏠 غرفة جديدة: ${roomId} بواسطة ${name}`);
-    callback({ success: true, roomId, roomState: rooms[roomId] });
+    console.log(`✅ تم إنشاء غرفة ${roomId} بواسطة ${name}`);
+    callback({ roomId });
+    io.to(roomId).emit("playerJoined", { players: rooms[roomId].players });
   });
 
   socket.on("joinRoom", ({ roomId, name }, callback) => {
     const room = rooms[roomId];
-    if (!room) return callback({ success: false, message: "الغرفة غير موجودة" });
-    if (room.players.find(p => p.id === socket.id)) {
-      return callback({ success: false, message: "أنت بالفعل في الغرفة" });
+    if (!room) {
+      return callback({ success: false, message: "الغرفة غير موجودة" });
+    }
+    if (room.players.length >= room.maxPlayers) {
+      return callback({ success: false, message: "الغرفة ممتلئة" });
     }
 
     room.players.push({ id: socket.id, name, isReady: false });
     socket.join(roomId);
     console.log(`👤 ${name} انضم إلى الغرفة ${roomId}`);
-    io.to(roomId).emit("playerJoined", { players: room.players });
     callback({ success: true, roomState: room });
+    io.to(roomId).emit("playerJoined", { players: room.players });
   });
 
-  socket.on("startGame", ({ roomId }) => {
-    const room = rooms[roomId];
-    if (!room || room.hostId !== socket.id) return;
-
-    room.isStarted = true;
-    console.log(`🚀 بدء اللعبة في الغرفة ${roomId}`);
-    io.to(roomId).emit("gameStarted", { players: room.players });
-  });
-
-  socket.on("submitQuestion", ({ roomId, question, fromId, targetId }) => {
+  socket.on("submitQuestion", ({ roomId, playerId, question }, callback) => {
     const room = rooms[roomId];
     if (!room) return;
 
-    room.questions.push({ question, from: fromId, to: targetId });
-    console.log(`📝 سؤال مضاف في ${roomId}:`, question);
-
-    // Optional: بث تحديث عدد الأسئلة
-    io.to(roomId).emit("questionSubmitted", { count: room.questions.length });
+    room.questions.push({ ...question, from: playerId });
+    console.log(`📩 سؤال مضاف من لاعب ${playerId} في غرفة ${roomId}`);
+    callback({ success: true });
   });
 
   socket.on("playerReady", ({ roomId, playerId }) => {
     const room = rooms[roomId];
     if (!room) return;
 
-    const player = room.players.find(p => p.id === playerId);
+    const player = room.players.find((p) => p.id === playerId);
     if (player) player.isReady = true;
 
     io.to(roomId).emit("playerJoined", { players: room.players });
+
+    const allReady = room.players.every((p) => p.isReady);
+    if (allReady) {
+      console.log(`🚀 جميع اللاعبين في الغرفة ${roomId} جاهزين!`);
+      io.to(roomId).emit("allPlayersReady", { questions: room.questions });
+    }
   });
 
   socket.on("disconnect", () => {
-    console.log("❌ لاعب فصل:", socket.id);
-    for (const roomId in rooms) {
-      const room = rooms[roomId];
-      room.players = room.players.filter(p => p.id !== socket.id);
-      if (room.players.length === 0) {
-        delete rooms[roomId];
-        console.log(`🗑️ حذف الغرفة ${roomId}`);
-      } else {
+    console.log("❌ عميل قطع الاتصال:", socket.id);
+    for (const [roomId, room] of Object.entries(rooms)) {
+      const index = room.players.findIndex((p) => p.id === socket.id);
+      if (index !== -1) {
+        room.players.splice(index, 1);
         io.to(roomId).emit("playerJoined", { players: room.players });
+
+        if (room.players.length === 0) {
+          delete rooms[roomId];
+          console.log(`🗑️ تم حذف الغرفة ${roomId} بسبب مغادرة الجميع`);
+        }
+        break;
       }
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🌐 السيرفر يعمل على المنفذ ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
+});
