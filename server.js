@@ -20,6 +20,7 @@ function generateRoomId() {
 }
 
 const rooms = {};
+const roomDeletionTimeouts = {};
 
 io.on("connection", (socket) => {
   console.log("🔌 User connected:", socket.id);
@@ -36,10 +37,7 @@ io.on("connection", (socket) => {
     };
     socket.join(roomId);
     console.log(`✅ Room created: ${roomId} by ${name}`);
-
-    if (callback) {
-      callback({ success: true, roomId });
-    }
+    callback({ success: true, roomId });
   });
 
   socket.on("joinRoom", ({ roomId, name }, callback) => {
@@ -58,6 +56,12 @@ io.on("connection", (socket) => {
 
     io.to(roomId).emit("playerJoined", { players: room.players });
     callback({ success: true });
+
+    // إلغاء التايمر لو اتلغى
+    if (roomDeletionTimeouts[roomId]) {
+      clearTimeout(roomDeletionTimeouts[roomId]);
+      delete roomDeletionTimeouts[roomId];
+    }
   });
 
   socket.on("submitQuestion", ({ roomId, question }) => {
@@ -103,8 +107,12 @@ io.on("connection", (socket) => {
         });
 
         if (room.players.length === 0) {
-          delete rooms[roomId];
-          console.log(`🗑️ Room ${roomId} deleted (empty)`);
+          // انتظر 5 دقائق قبل حذف الغرفة
+          roomDeletionTimeouts[roomId] = setTimeout(() => {
+            delete rooms[roomId];
+            delete roomDeletionTimeouts[roomId];
+            console.log(`🗑️ Room ${roomId} deleted after timeout`);
+          }, 5 * 60 * 1000); // 5 دقائق
         }
         break;
       }
