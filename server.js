@@ -24,7 +24,7 @@ const rooms = {};
 io.on("connection", (socket) => {
   console.log("🔌 User connected:", socket.id);
 
-  socket.on("createRoom", ({ name, maxPlayers }) => {
+  socket.on("createRoom", ({ name, maxPlayers }, callback) => {
     const roomId = generateRoomId();
     rooms[roomId] = {
       hostId: socket.id,
@@ -36,7 +36,10 @@ io.on("connection", (socket) => {
     };
     socket.join(roomId);
     console.log(`✅ Room created: ${roomId} by ${name}`);
-    socket.emit("roomCreated", { roomId });
+
+    if (callback) {
+      callback({ success: true, roomId });
+    }
   });
 
   socket.on("joinRoom", ({ roomId, name }, callback) => {
