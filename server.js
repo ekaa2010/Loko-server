@@ -57,7 +57,7 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("playerJoined", { players: room.players });
     callback({ success: true });
 
-    // إلغاء التايمر لو اتلغى
+    // إلغاء مؤقت حذف الغرفة لو كان موجود
     if (roomDeletionTimeouts[roomId]) {
       clearTimeout(roomDeletionTimeouts[roomId]);
       delete roomDeletionTimeouts[roomId];
@@ -90,6 +90,22 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("startQuestionEntry", ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.hostId) return;
+
+    io.to(roomId).emit("startQuestionEntry");
+    console.log(`📝 Question Entry Phase started in room ${roomId}`);
+  });
+
+  socket.on("startGame", ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.hostId) return;
+
+    io.to(roomId).emit("startGame");
+    console.log(`🎮 Game started in room ${roomId}`);
+  });
+
   socket.on("disconnect", () => {
     console.log("❌ User disconnected:", socket.id);
 
@@ -112,7 +128,7 @@ io.on("connection", (socket) => {
             delete rooms[roomId];
             delete roomDeletionTimeouts[roomId];
             console.log(`🗑️ Room ${roomId} deleted after timeout`);
-          }, 5 * 60 * 1000); // 5 دقائق
+          }, 5 * 60 * 1000);
         }
         break;
       }
