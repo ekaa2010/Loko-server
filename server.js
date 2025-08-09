@@ -7,6 +7,9 @@ const { Server } = require("socket.io");
 const app = express();
 app.use(cors());
 
+// اختيارية: لفحص الصحة
+app.get("/health", (_, res) => res.json({ ok: true }));
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
@@ -21,8 +24,9 @@ function generateRoomId() {
 }
 
 // الحالة
-const rooms = {};                 // roomId -> { hostId, maxPlayers, players[], questions[], readyPlayers:Set, phase, createdAt }
-const roomDeletionTimeouts = {};  // roomId -> timeoutId
+// room = { hostId, maxPlayers, players[], questions[], readyPlayers:Set, phase, allReadySent:boolean, createdAt }
+const rooms = {};
+const roomDeletionTimeouts = {}; // roomId -> timeoutId
 
 function getRoomState(roomId) {
   const r = rooms[roomId];
@@ -31,7 +35,7 @@ function getRoomState(roomId) {
     roomId,
     hostId: r.hostId,
     maxPlayers: r.maxPlayers,
-    phase: r.phase,
+    phase: r.phase, // waiting -> question -> playing -> ended
     players: (r.players || []).map(p => ({ id: p.id, name: p.name })),
     readyCount: r.readyPlayers.size,
     questionsCount: r.questions.length,
@@ -51,13 +55,14 @@ io.on("connection", (socket) => {
         players: [{ id: socket.id, name: name || "Player" }],
         questions: [],
         readyPlayers: new Set(),
-        phase: "waiting", // waiting -> question -> playing -> ended
+        phase: "waiting",
+        allReadySent: false,
         createdAt: Date.now(),
       };
       socket.join(roomId);
       console.log(`✅ Room created ${roomId} by ${name}`);
       cb({ success: true, roomId, room: getRoomState(roomId) });
-      io.to(roomId).emit("playerJoined", { players: rooms[roomId].players });
+      io.to(roomId).emit("playerJoined", { room: getRoomState(roomId) });
     } catch (e) {
       console.error(e);
       cb({ success: false, message: "Server error while creating room." });
@@ -75,12 +80,13 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     console.log(`👤 joined ${roomId}: ${name}`);
 
+    // لو كان فيه تايمر حذف، نلغيه
     if (roomDeletionTimeouts[roomId]) {
       clearTimeout(roomDeletionTimeouts[roomId]);
       delete roomDeletionTimeouts[roomId];
     }
 
-    io.to(roomId).emit("playerJoined", { players: room.players });
+    io.to(roomId).emit("playerJoined", { room: getRoomState(roomId) });
     cb({ success: true, room: getRoomState(roomId) });
   });
 
@@ -91,7 +97,11 @@ io.on("connection", (socket) => {
     if (socket.id !== room.hostId)
       return cb({ success: false, message: "Only host can start." });
 
+    // تصفير الجاهزين لو كان حد دست جاهز بدري
+    room.readyPlayers = new Set();
+    room.allReadySent = false;
     room.phase = "question";
+
     io.to(roomId).emit("startQuestionEntry", { room: getRoomState(roomId) });
     cb({ success: true });
   });
@@ -129,10 +139,12 @@ io.on("connection", (socket) => {
       playerId: pid,
       readyCount: room.readyPlayers.size,
       total: room.players.length,
+      room: getRoomState(roomId),
     });
 
-    // لو الكل جاهز أبعت إشارة واضحة ومعاها hostId
-    if (room.readyPlayers.size === room.players.length) {
+    // لو الكل جاهز أبعت إشارة واضحة ومعاها hostId — مرة واحدة فقط
+    if (!room.allReadySent && room.readyPlayers.size === room.players.length) {
+      room.allReadySent = true;
       io.to(roomId).emit("allPlayersReady", {
         room: getRoomState(roomId),
         hostId: room.hostId,
@@ -150,6 +162,7 @@ io.on("connection", (socket) => {
       return cb({ success: false, message: "Only host can start." });
 
     room.phase = "playing";
+    room.allReadySent = false; // نسمح بدورة تانية لو رجعنا لأسئلة لاحقًا
     io.to(roomId).emit("startGame", {
       room: getRoomState(roomId),
       players: room.players,
@@ -174,12 +187,11 @@ io.on("connection", (socket) => {
       // لو الهوست خرج نرقي أول لاعب باقي
       if (socket.id === room.hostId && room.players.length > 0) {
         room.hostId = room.players[0].id;
-        io.to(roomId).emit("hostChanged", { hostId: room.hostId });
+        io.to(roomId).emit("hostChanged", { hostId: room.hostId, room: getRoomState(roomId) });
       }
 
       io.to(roomId).emit("playerLeft", {
         playerId: socket.id,
-        players: room.players,
         room: getRoomState(roomId),
       });
 
